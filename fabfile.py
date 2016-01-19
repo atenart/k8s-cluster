@@ -1,11 +1,17 @@
 from contextlib import contextmanager as _cm
 import os
 import shutil
+from StringIO import StringIO
 import tempfile
 
 from fabric.api import *
+from fabric.contrib.files import append
 
-bindir = os.path.dirname(os.path.realpath(__file__)) + '/bin'
+env.user = 'core'
+env.colorize_errors = True
+
+rootdir = os.path.dirname(os.path.realpath(__file__))
+bindir = rootdir + '/bin'
 clusterdir = os.getcwd()
 
 '''
@@ -104,3 +110,82 @@ def sign_ssh_key(path, name='cluster admin'):
         abort('No public key to sign')
 
     local('ssh-keygen -s ca/ssh/user_ca -n root,core -I "%s" %s' % (name, key))
+
+'''
+CoreOS setup
+'''
+def _networkd_config(iface, address, gateway):
+    return '''
+[Match]
+Name=%s
+
+[Network]
+Address=%s
+Gateway=%s
+DNS=8.8.8.8
+DNS=4.4.4.4
+''' % (iface, address, gateway)
+
+def _configure_coreos(hostname, address, gateway):
+    with _tmpdir() as tmpdir, lcd(tmpdir), cd('/mnt'):
+        # set the hostname
+        put(StringIO(hostname), 'etc/hostname', use_sudo=True)
+
+        # setup the SSH server
+        sudo('rm -f etc/ssh/sshd_config')
+        sudo('cp /usr/share/ssh/sshd_config etc/ssh/sshd_config')
+
+        # generate and sign the SSH keys
+        sudo('chroot . /usr/bin/ssh-keygen -A')
+        get(remote_path='etc/ssh/ssh_host_*_key.pub', local_path=tmpdir, use_sudo=True)
+
+        for pubkey in os.listdir(tmpdir):
+            local('ssh-keygen -s %s/ca/ssh/machine_ca -I %s -h %s' % (clusterdir, hostname, pubkey))
+            append('etc/ssh/sshd_config', 'HostCertificate /etc/ssh/%s-cert.pub' % pubkey[:-4], use_sudo=True)
+
+        put('*-cert.pub', 'etc/ssh', mode=0644, use_sudo=True)
+        sudo('chown root:root etc/ssh/*-cert.pub')
+
+        # allow the admins to connect
+        authority = 'cert-authority %s' % open(os.path.join(clusterdir, 'ca/ssh/user_ca.pub')).read()
+
+        sudo('mkdir -p -m 0700 root/.ssh')
+        put(StringIO(authority), 'root/.ssh/authorized_keys', mode=0600, use_sudo=True)
+        sudo('chown -R root:root root/.ssh')
+
+        sudo('mkdir -p -m 0700 home/core/.ssh')
+        put(StringIO(authority), 'home/core/.ssh/authorized_keys', mode=0600, use_sudo=True)
+        sudo('chown -R core:core home/core/.ssh')
+
+        # set the update strategy
+        append('etc/coreos/update.conf', 'REBOOT_STRATEGY=etcd-lock', use_sudo=True)
+        append('etc/profile.d/locksmithd.sh', 'export LOCKSMITHD_REBOOT_WINDOW_START=3:00', use_sudo=True)
+        append('etc/profile.d/locksmithd.sh', 'export LOCKSMITHD_REBOOT_WINDOW_LENGTH=30m', use_sudo=True)
+
+        # setup the network
+        ret = sudo('ip route | grep default | sed \'s/.*dev \\([a-z]\\+[0-9]\\+\\) .*/\\1/\'')
+        iface = ret.stdout.strip()
+        put(StringIO(_networkd_config(iface, address, gateway)),
+            'etc/systemd/network/10-static.network', use_sudo=True)
+
+def bootstrap_replica(hostname=None, address=None, gateway=None, device='/dev/sda', channel='beta'):
+    '''Install and configure a CoreOS replica'''
+    if hostname is None or address is None or gateway is None:
+       abort('incorrect parameters')
+
+    # Install CoreOS on the (virtual?) machine
+    sudo('coreos-install -d %s -C %s' % (device, channel))
+
+    @_cm
+    def _mount():
+        sudo('mount %s9 /mnt' % device)
+        sudo('mount -o bind /dev /mnt/dev')
+        sudo('mount -o bind /usr /mnt/usr')
+        yield
+        sudo('umount -R /mnt')
+
+    with _mount():
+        _configure_coreos(hostname=hostname, address=address, gateway=gateway)
+
+    with warn_only():
+        reboot()
