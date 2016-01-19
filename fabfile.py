@@ -1,8 +1,10 @@
 from contextlib import contextmanager as _cm
 import os
 import shutil
+import socket
 from StringIO import StringIO
 import tempfile
+import time
 
 from fabric.api import *
 from fabric.contrib.files import append
@@ -23,8 +25,15 @@ def _tmpdir():
     yield tmpdir
     shutil.rmtree(tmpdir)
 
-def _make_cfssl_config(outdir, cn):
-    open('%s/ca-csr.json' % outdir, 'w').write('''
+def _get_host_ip():
+    try:
+        socket.inet_aton(env.host)
+        return env.host
+    except socket.error:
+        return local('dig +short %s' % env.host, capture=True).stdout.strip()
+
+def _make_cfssl_config(outdir, cn, filename='ca-csr'):
+    open('%s/%s.json' % (outdir, filename), 'w').write('''
 {
     "CN": "%s",
     "key": {
@@ -48,7 +57,7 @@ def _make_cfssl_config(outdir, cn):
 def _gen_ca(outdir, cn):
     outdir = os.path.join(clusterdir, outdir)
     with _tmpdir() as tmpdir, lcd(tmpdir):
-        _make_cfssl_config(outdir=tmpdir, cn=cn, filename='tmp')
+        _make_cfssl_config(outdir=tmpdir, cn=cn)
 
         # generate a certificate authority in 'outdir'
         local('%s/cfssl gencert -initca ca-csr.json | %s/cfssljson -bare ca -' % (bindir, bindir))
@@ -126,6 +135,9 @@ DNS=8.8.8.8
 DNS=4.4.4.4
 ''' % (iface, address, gateway)
 
+def _systemd_env(env):
+    return '[Service]\n' + '\n'.join('Environment=%s=%s' % (k, v) for k,v in env.iteritems())
+
 def _configure_coreos(hostname, address, gateway):
     with _tmpdir() as tmpdir, lcd(tmpdir), cd('/mnt'):
         # set the hostname
@@ -168,10 +180,128 @@ def _configure_coreos(hostname, address, gateway):
         put(StringIO(_networkd_config(iface, address, gateway)),
             'etc/systemd/network/10-static.network', use_sudo=True)
 
+'''
+Etcd setup
+'''
+def _etcd_make_cert(ip, kind):
+    with _tmpdir() as tmpdir, lcd(tmpdir), cd('/etc/etcd'):
+        _gen_cert(outdir=tmpdir, cadir='ca/etcd/%s' % kind, cn=ip, prefix=kind, ip=ip)
+
+        put('%s-key.pem' % kind, '%s-key.pem' % kind, use_sudo=True)
+        sudo('chmod 600 %s-key.pem' % kind)
+
+        put('%s.pem' % kind, '%s.pem' % kind, use_sudo=True)
+        put('%s/ca/etcd/%s/ca.pem' % (clusterdir, kind), '%s.ca' % kind, use_sudo=True)
+        sudo('cat %s.ca >> %s.pem' % (kind, kind))
+        sudo('chmod 644 %s.pem %s.ca' % (kind, kind))
+
+def _etcd_setup_service(ip):
+    sudo('mkdir -p /etc/systemd/system/etcd2.service.d')
+
+    env = {
+        'ETCD_LISTEN_PEER_URLS'     : 'https://%s:2380' % ip,
+        'ETCD_LISTEN_CLIENT_URLS'   : 'https://%s:2379,http://127.0.0.1:2379' % ip,
+        'ETCD_ADVERTISE_PEER_URLS'  : 'https://%s:2380' % ip,
+        'ETCD_ADVERTISE_CLIENT_URLS': 'https://%s:2379' % ip,
+        'ETCD_PEER_CERT_FILE'       : '/etc/etcd/peering.pem',
+        'ETCD_PEER_KEY_FILE'        : '/etc/etcd/peering-key.pem',
+        'ETCD_PEER_CA_FILE'         : '/etc/etcd/peering.ca',
+        'ETCD_CERT_FILE'            : '/etc/etcd/client.pem',
+        'ETCD_KEY_FILE'             : '/etc/etcd/client-key.pem',
+        'ETCD_PEER_CLIENT_CERT_AUTH': 'true',
+    }
+    put(StringIO(_systemd_env(env)), '/etc/systemd/system/etcd2.service.d/env.conf', use_sudo=True)
+
+    append('[Service]\nExecStart=\nExecStart=/usr/bin/etcd2',
+           '/etc/systemd/system/etcd2.service.d/2.2.conf', use_sudo=True)
+
+    sudo('mkdir -p /etc/profile.d')
+    append('/etc/profile.d/etcd.sh', 'export ETCDCTL_CA_FILE=/etc/etcd/client.ca', use_sudo=True)
+
+def _etcd_setup_first_replica(ip, mid):
+    env = {
+        'ETCD_INITIAL_CLUSTER'              : '%s=https://%s:2380' % (mid, ip),
+        'ETCD_INITIAL_CLUSTER_STATE'        : 'new',
+        'ETCD_INITIAL_ADVERTISE_PEER_URLS'  : 'https://%s:2380' % ip,
+    }
+    put(StringIO(_systemd_env(env)), '/etc/systemd/system/etcd2.service.d/bootstrap.conf', use_sudo=True)
+
+def _etcd_setup_additional_replica(ip, mid):
+    peers = ['%s=https://%s:2380' % (mid, ip)]
+
+    for l in local('./etcdctl member list', capture=True).stdout.strip().splitlines():
+        name, peer = None, None
+        for w in l.strip().split():
+            if w.startswith('name='):
+                name = w.split('=', 1)[1]
+            elif w.startswith('peerURLs='):
+                peer = w.split('=', 1)[1]
+
+        if name is None or peer is None:
+            abort('Bad parse of the etcd member list')
+
+        peers.append('%s=%s' % (name, peer))
+
+    env = {
+        'ETCD_INITIAL_CLUSTER'              : ','.join(peers),
+        'ETCD_INITIAL_CLUSTER_STATE'        : 'existing',
+        'ETCD_INITIAL_ADVERTISE_PEER_URLS'  : 'https://%s:2380' % ip,
+    }
+    put(StringIO(_systemd_env(env)), '/etc/systemd/system/etcd2.service.d/bootstrap.conf', use_sudo=True)
+
+    local('./etcdctl member add %s https://%s:2380' % (mid, ip))
+
+def _etcd_endpoints():
+    endpoints = []
+    for l in run('etcdctl --ca-file=/etc/etcd/client.ca member list').stdout.strip().splitlines():
+        for w in l.split():
+            if not w.startswith('clientURLs='):
+                continue
+            endpoints.append(w.split('=', 1)[1])
+    return ','.join(endpoints)
+
+def _etcd_setup_wrapper():
+    wrapper = '#!/bin/bash\n../bin/etcdctl --ca-file=ca/etcd/client/ca.pem -C %s $@' % _etcd_endpoints()
+    open('etcdctl', 'w').write(wrapper)
+    local('chmod +x etcdctl')
+
+def _setup_etcd(proxy=False):
+    machine_id = run('cat /etc/machine-id').stdout.strip()
+    ip = _get_host_ip()
+
+    sudo('mkdir -p -m 0755 /etc/etcd')
+    _etcd_make_cert(ip, 'peering')
+    _etcd_make_cert(ip, 'client')
+    sudo('chown etcd:root /etc/etcd/*')
+
+    _etcd_setup_service(ip)
+
+    if not os.path.isfile('etcdctl'):   # first replica
+        _etcd_setup_first_replica(ip, machine_id)
+    elif not proxy:                     # additional replica
+        _etcd_setup_additional_replica(ip, machine_id)
+#    else:                               # proxy
+#        _etcd_setup_proxy(ip, machine_id)
+
+    sudo('systemctl daemon-reload')
+    sudo('systemctl enable etcd2.service')
+    sudo('systemctl start etcd2.service')
+
+    # wait for the etcd daemon to be up and running
+    with settings(warn_only=True):
+        while run('etcdctl --ca-file=/etc/etcd/client.ca ls').failed:
+            time.sleep(1)
+
+    sudo('rm -f /etc/systemd/system/etcd2.service.d/bootstrap.conf')
+    sudo('systemctl daemon-reload')
+
+    # locally setup/update a wrapper to connect to the etcd cluster
+    _etcd_setup_wrapper()
+
 def bootstrap_replica(hostname=None, address=None, gateway=None, device='/dev/sda', channel='beta'):
     '''Install and configure a CoreOS replica'''
     if hostname is None or address is None or gateway is None:
-       abort('incorrect parameters')
+        abort('incorrect parameters')
 
     # Install CoreOS on the (virtual?) machine
     sudo('coreos-install -d %s -C %s' % (device, channel))
@@ -189,3 +319,5 @@ def bootstrap_replica(hostname=None, address=None, gateway=None, device='/dev/sd
 
     with warn_only():
         reboot()
+
+    _setup_etcd()
