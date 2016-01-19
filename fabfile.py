@@ -339,6 +339,24 @@ def _setup_fleet():
     # locally setup/update a wrapper to connect to the fleet cluster
     _fleet_setup_wrapper()
 
+'''
+Flanneld setup
+'''
+def _setup_flanneld(network='10.10.0.0/16', netmask=24):
+    with settings(warn_only=True):
+        if local('./etcdctl get /coreos.com/network/config').failed:
+            local('./etcdctl set /coreos.com/network/config '
+                  '\'{"Network":"%s","SubnetLen":%d,"Backend":{"Type":"host-gw"}}\'' %
+                  (network, netmask))
+
+    append('/etc/profile.d/etcd.sh', 'export FLANNELD_ETCD_CAFILE=/etc/etcd/client.ca', use_sudo=True)
+
+    sudo('mkdir -p /etc/systemd/system/docker.service.d')
+    dependency = '[Unit]\nRequires=flanneld.service\nAfter=flanneld.service'
+    put(StringIO(dependency), '/etc/systemd/system/docker.service.d/40-flannel.conf', use_sudo=True)
+
+    sudo('systemctl daemon-reload')
+
 def bootstrap_replica(hostname=None, address=None, gateway=None, device='/dev/sda', channel='beta'):
     '''Install and configure a CoreOS replica'''
     if hostname is None or address is None or gateway is None:
@@ -363,3 +381,4 @@ def bootstrap_replica(hostname=None, address=None, gateway=None, device='/dev/sd
 
     _setup_etcd()
     _setup_fleet()
+    _setup_flanneld()
