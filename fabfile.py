@@ -91,6 +91,7 @@ def gen_certificates():
     os.makedirs('ca/etcd/peering', mode=0700)
     os.makedirs('ca/etcd/client', mode=0700)
     os.makedirs('ca/kubernetes', mode=0700)
+    os.makedirs('ca/registry', mode=0700)
 
     # generate SSH certificate authority
     local('ssh-keygen -b 4096 -f ca/ssh/machine_ca -C machine-ca')
@@ -112,6 +113,11 @@ def gen_certificates():
     # generate the Kubernetes certificate authority and admin certificate
     _gen_ca(outdir='ca/kubernetes', cn='Kubernetes CA')
     _gen_cert(outdir='ca/kubernetes', cadir='ca/kubernetes', cn='Kubernetes admin', prefix='admin')
+
+    # generate the Docker registry certificate authority
+    _gen_ca(outdir='ca/registry', cn='Docker registry CA')
+    _gen_cert(outdir='ca/registry', cadir='ca/registry', cn='Docker registry client',
+              prefix='client')
 
 def sign_ssh_key(path, name='cluster admin'):
     '''Sign an SSH key with the cluster CA'''
@@ -497,6 +503,7 @@ def _setup_kubernetes():
         _kubernetes_setup_master(ip)
         _kubernetes_setup_wrapper(ip)
         _setup_kubernetes_addons()
+        _setup_registry()
     else:                               # worker
         _kubernetes_push_manifests('worker', ip, master)
         _kubernetes_setup_worker(ip, master)
@@ -513,6 +520,44 @@ def _setup_kubernetes_addons():
             # wait for the DNS add-on to be up and running
             while run('dig @10.20.0.42 kubernetes.default.cluster').failed:
                 time.sleep(15)
+
+'''
+Docker registry pod setup
+'''
+def _setup_registry():
+    ip = _get_host_ip()
+
+    # put the pod manifest
+    put('%s/registry/docker-registry.yaml' % rootdir, '/etc/kubernetes/manifests', use_sudo=True)
+
+    # add the nginx configuration
+    sudo('mkdir -p -m 0755 /etc/registry')
+    put('%s/registry/nginx.conf' % rootdir, '/etc/registry', use_sudo=True)
+
+    with _tmpdir() as tmpdir, lcd(tmpdir), cd('/etc/registry'):
+        _gen_cert(outdir=tmpdir, cadir='ca/registry', cn=ip, prefix='registry', ip=ip)
+
+        put('registry-key.pem', 'registry-key.pem', use_sudo=True)
+        sudo('chmod 600 registry-key.pem')
+
+        put('registry.pem', 'registry.pem', use_sudo=True)
+        put('%s/ca/registry/ca.pem' % clusterdir, 'ca.pem', use_sudo=True)
+        sudo('cat ca.pem >> registry.pem')
+        sudo('chmod 644 registry.pem ca.pem')
+
+        sudo('chown root:root *.pem')
+
+    sudo('systemctl daemon-reload')
+    sudo('systemctl restart kubelet.service')
+
+    _registry_setup_wrapper()
+
+def _registry_setup_wrapper():
+    wrapper = ('#!/bin/bash\n'
+               'docker --tlscert=ca/registry/client.pem --tlskey=ca/registry/client-key.pem \\\n'
+               '    --tlscacert=ca/registry/ca.pem $@')
+    open('docker', 'w').write(wrapper)
+    local('chmod +x docker')
 
 '''
 Replica setup
