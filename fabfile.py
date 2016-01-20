@@ -496,9 +496,23 @@ def _setup_kubernetes():
         _kubernetes_push_manifests('master', ip, master)
         _kubernetes_setup_master(ip)
         _kubernetes_setup_wrapper(ip)
+        _setup_kubernetes_addons()
     else:                               # worker
         _kubernetes_push_manifests('worker', ip, master)
         _kubernetes_setup_worker(ip, master)
+
+'''
+Kubernetes add-ons
+'''
+def _setup_kubernetes_addons():
+    # DNS add-on
+    with settings(warn_only=True):
+        if run('dig @10.20.0.42 kubernetes.default.cluster').failed:
+            local('./kubectl create -f %s/k8s_addons/dns-addon.yaml' % rootdir)
+
+            # wait for the DNS add-on to be up and running
+            while run('dig @10.20.0.42 kubernetes.default.cluster').failed:
+                time.sleep(15)
 
 '''
 Replica setup
