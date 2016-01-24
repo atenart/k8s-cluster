@@ -6,7 +6,6 @@ metadata:
 spec:
   selector:
     k8s-app: docker-registry
-  clusterIP: 10.20.0.100
   ports:
   - name: https
     protocol: TCP
