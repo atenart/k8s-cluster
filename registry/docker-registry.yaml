@@ -11,11 +11,13 @@ spec:
     image: registry:2
     ports:
     - containerPort: 5000
+      protocol: TCP
   - name: registry-proxy
     image: nginx
     ports:
     - containerPort: 443
       hostPort: 5000
+      protocol: TCP
     volumeMounts:
     - mountPath: /etc/nginx
       name: nginx-conf
