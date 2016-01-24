@@ -24,19 +24,3 @@ spec:
   - name: nginx-conf
     hostPath:
       path: /etc/registry
-
----
-
-apiVersion: v1
-kind: Service
-metadata:
-  name: docker-registry
-  namespace: kube-system
-spec:
-  selector:
-    k8s-app: docker-registry
-  clusterIP: 10.20.0.100
-  ports:
-  - name: https
-    protocol: TCP
-    port: 5000

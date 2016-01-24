@@ -395,7 +395,9 @@ def _kubernetes_master():
 def _kubernetes_setup_master(ip):
     with _tmpdir() as tmpdir, lcd(tmpdir), cd('/etc/kubernetes/ssl'):
         _gen_cert(outdir=tmpdir, cadir='ca/kubernetes', cn=ip, prefix='apiserver', ip=ip)
+        _gen_cert(outdir=tmpdir, cadir='ca/kubernetes', cn=ip, prefix='worker', ip=ip)
 
+        # API server certs
         put('apiserver-key.pem', 'apiserver-key.pem', use_sudo=True)
         sudo('chmod 600 apiserver-key.pem')
 
@@ -403,6 +405,14 @@ def _kubernetes_setup_master(ip):
         put('%s/ca/kubernetes/ca.pem' % clusterdir, 'ca.pem', use_sudo=True)
         sudo('cat ca.pem >> apiserver.pem')
         sudo('chmod 644 apiserver.pem ca.pem')
+
+        # worker certs
+        put('worker-key.pem', 'worker-key.pem', use_sudo=True)
+        sudo('chmod 600 worker-key.pem')
+
+        put('worker.pem', 'worker.pem', use_sudo=True)
+        sudo('cat ca.pem >> worker.pem')
+        sudo('chmod 644 worker.pem ca.pem')
 
         sudo('chown root:root *.pem')
 
@@ -412,7 +422,9 @@ def _kubernetes_setup_master(ip):
                        '  --register-node=true \\\n'
                        '  --allow-privileged=true \\\n'
                        '  --config=/etc/kubernetes/manifests \\\n'
-                       '  --hostname-override=%s\n'
+                       '  --hostname-override=%s\\\n'
+                       '  --cluster-dns=10.20.0.42 \\\n'
+                       '  --cluster-domain=cluster\n'
                        'Restart=always\n'
                        'RestartSec=10\n'
                        '[Install]\n'
@@ -453,6 +465,8 @@ def _kubernetes_setup_worker(ip, apiserver):
                         '  --allow-privileged=true \\\n'
                         '  --config=/etc/kubernetes/manifests \\\n'
                         '  --hostname-override=%s \\\n'
+                        '  --cluster-dns=10.20.0.42 \\\n'
+                        '  --cluster-domain=cluster \\\n'
                         '  --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \\\n'
                         '  --tls-cert-file=/etc/kubernetes/ssl/worker.pem \\\n'
                         '  --tls-private-key-file=/etc/kubernetes/ssl/worker-key.pem\n'
@@ -461,6 +475,23 @@ def _kubernetes_setup_worker(ip, apiserver):
                         '[Install]\n'
                         'WantedBy=multi-user.target') % (apiserver, ip)
     put(StringIO(kubelet_service), '/etc/systemd/system/kubelet.service', use_sudo=True)
+
+    sudo('systemctl daemon-reload')
+    sudo('systemctl enable kubelet.service')
+    sudo('systemctl start kubelet.service')
+
+def _kubernetes_setup_wrapper(master):
+    wrapper = ('#!/bin/bash\n'
+               '../bin/kubectl --server=https://%s --certificate-authority=ca/kubernetes/ca.pem \\\n'
+               '    --client-key=ca/kubernetes/admin-key.pem --client-certificate=ca/kubernetes/admin.pem \\\n'
+               '    --username=admin $@\n') % master
+    open('kubectl', 'w').write(wrapper)
+    local('chmod +x kubectl')
+
+def _setup_kubernetes():
+    ip = _get_host_ip()
+    master = _kubernetes_master()
+    sudo('mkdir -p -m 0755 /etc/kubernetes/ssl')
 
     kubeconfig = ('apiVersion: v1\n'
                   'kind: Config\n'
@@ -480,23 +511,6 @@ def _kubernetes_setup_worker(ip, apiserver):
                   '  name: kubelet-context\n'
                   'current-context: kubelet-context')
     put(StringIO(kubeconfig), '/etc/kubernetes/worker-kubeconfig.yaml', use_sudo=True)
-
-    sudo('systemctl daemon-reload')
-    sudo('systemctl enable kubelet.service')
-    sudo('systemctl start kubelet.service')
-
-def _kubernetes_setup_wrapper(master):
-    wrapper = ('#!/bin/bash\n'
-               '../bin/kubectl --server=https://%s --certificate-authority=ca/kubernetes/ca.pem \\\n'
-               '    --client-key=ca/kubernetes/admin-key.pem --client-certificate=ca/kubernetes/admin.pem \\\n'
-               '    --username=admin $@\n') % master
-    open('kubectl', 'w').write(wrapper)
-    local('chmod +x kubectl')
-
-def _setup_kubernetes():
-    ip = _get_host_ip()
-    master = _kubernetes_master()
-    sudo('mkdir -p -m 0755 /etc/kubernetes/ssl')
 
     if not os.path.isfile('kubectl'):   # master
         _kubernetes_push_manifests('master', ip, master)
@@ -529,6 +543,9 @@ def _setup_registry():
 
     # put the pod manifest
     put('%s/registry/docker-registry.yaml' % rootdir, '/etc/kubernetes/manifests', use_sudo=True)
+
+    # add a Docker registry service
+    local('./kubectl create -f %s/registry/registry-service.yaml' % rootdir)
 
     # add the nginx configuration
     sudo('mkdir -p -m 0755 /etc/registry')
@@ -587,4 +604,7 @@ def bootstrap_replica(hostname=None, address=None, gateway=None, device='/dev/sd
     _setup_etcd()
     _setup_fleet()
     _setup_flanneld()
+    _setup_kubernetes()
+
+def test():
     _setup_kubernetes()
