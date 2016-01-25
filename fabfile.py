@@ -522,6 +522,8 @@ def _setup_kubernetes():
         _kubernetes_push_manifests('worker', ip, master)
         _kubernetes_setup_worker(ip, master)
 
+    _docker_registry_access(ip, master.split('//', 1)[1])
+
 '''
 Kubernetes add-ons
 '''
@@ -567,14 +569,26 @@ def _setup_registry():
     sudo('systemctl daemon-reload')
     sudo('systemctl restart kubelet.service')
 
-    _registry_setup_wrapper()
+    # add the private registry certs to the local Docker instance
+    local('sudo mkdir -p -m 0755 /etc/docker/certs.d/%s:5000' % ip)
+    local('sudo cp %s/ca/registry/ca.pem /etc/docker/certs.d/%s:5000/ca.crt' % (clusterdir, ip))
+    local('sudo cp %s/ca/registry/client.pem /etc/docker/certs.d/%s:5000/client.cert' % (clusterdir, ip))
+    local('sudo cp %s/ca/registry/client-key.pem /etc/docker/certs.d/%s:5000/client.key' % (clusterdir, ip))
 
-def _registry_setup_wrapper():
-    wrapper = ('#!/bin/bash\n'
-               'docker --tlscert=ca/registry/client.pem --tlskey=ca/registry/client-key.pem \\\n'
-               '    --tlscacert=ca/registry/ca.pem $@')
-    open('docker', 'w').write(wrapper)
-    local('chmod +x docker')
+def _docker_registry_access(ip, master):
+    sudo('mkdir -p -m 0755 /etc/docker/certs.d/%s:5000' % master)
+
+    with _tmpdir() as tmpdir, lcd(tmpdir), cd('/etc/docker/certs.d/%s:5000' % master):
+        _gen_cert(outdir=tmpdir, cadir='ca/registry', cn='Registry client %s' % ip, prefix='client', ip=ip)
+
+        put('client-key.pem', 'client.key', use_sudo=True)
+        sudo('chmod 600 client.key')
+
+        put('%s/ca/registry/ca.pem' % clusterdir, 'ca.crt', use_sudo=True)
+        put('client.pem', 'client.cert', use_sudo=True)
+        sudo('chmod 644 ca.crt client.cert')
+
+        sudo('chown root:root *')
 
 '''
 Replica setup
@@ -604,7 +618,4 @@ def bootstrap_replica(hostname=None, address=None, gateway=None, device='/dev/sd
     _setup_etcd()
     _setup_fleet()
     _setup_flanneld()
-    _setup_kubernetes()
-
-def test():
     _setup_kubernetes()
