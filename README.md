@@ -51,6 +51,13 @@ directory to store the binaries. You also need to install *Fabric*.
 Local wrappers will be created in the current directory, to communicate with the
 cluster: *docker*, *etcdctl*, *fleetctl* and *kubectl*.
 
+## Use the private Docker registry
+
+```
+docker tag <image> <k8s master ip>:5000/<name>
+docker push <k8s master ip>:5000/<name>
+```
+
 ## TODO
 
 - Etcd proxy support.
