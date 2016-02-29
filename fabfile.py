@@ -419,7 +419,7 @@ def _kubernetes_setup_master(ip):
     kubelet_service = ('[Service]\n'
                        'ExecStart=/usr/bin/kubelet \\\n'
                        '  --api-servers=http://127.0.0.1:8080 \\\n'
-                       '  --register-node=true \\\n'
+                       '  --register-node=false \\\n'
                        '  --allow-privileged=true \\\n'
                        '  --config=/etc/kubernetes/manifests \\\n'
                        '  --hostname-override=%s\\\n'
