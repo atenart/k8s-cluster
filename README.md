@@ -39,7 +39,7 @@ directory to store the binaries. You also need to install *Fabric*.
 
 1. Sign your SSH key:
 	```
-	$ fab -f ../fabfile.py gen_certificates sign_ssh_key:path=~/.ssh/id_rsa.pub
+	$ fab -f ../fabfile.py sign_ssh_key:path=~/.ssh/id_rsa.pub
 	```
 
 1. For each node, run:
