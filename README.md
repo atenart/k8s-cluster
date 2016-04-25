@@ -62,3 +62,4 @@ docker push <k8s master ip>:5000/<name>
 
 - Etcd proxy support.
 - More than one Kubernetes master.
+- A Kubernetes upgrade mechanism.
