@@ -381,7 +381,7 @@ def _kubernetes_push_manifests(kind, ip, k8s_master):
 
 def _kubernetes_master():
     if not os.path.isfile('kubectl'):
-        return _get_host_ip()
+        return 'https://%s' % _get_host_ip()
 
     import re
     regex = re.compile(r'\x1b[^m]*m')
@@ -516,11 +516,11 @@ def _setup_kubernetes():
         _kubernetes_push_manifests('master', ip, master)
         _kubernetes_setup_master(ip)
         _kubernetes_setup_wrapper(ip)
-        _setup_kubernetes_addons()
         _setup_registry()
     else:                               # worker
         _kubernetes_push_manifests('worker', ip, master)
         _kubernetes_setup_worker(ip, master)
+        _setup_kubernetes_addons()
 
     _docker_registry_access(ip, master.split('//', 1)[1])
 
@@ -545,9 +545,6 @@ def _setup_registry():
 
     # put the pod manifest
     put('%s/registry/docker-registry.yaml' % rootdir, '/etc/kubernetes/manifests', use_sudo=True)
-
-    # add a Docker registry service
-    local('./kubectl create -f %s/registry/registry-service.yaml' % rootdir)
 
     # add the nginx configuration
     sudo('mkdir -p -m 0755 /etc/registry')

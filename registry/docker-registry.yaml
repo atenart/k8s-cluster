@@ -9,6 +9,9 @@ spec:
   containers:
   - name: docker-registry
     image: registry:2
+    volumeMounts:
+    - mountPath: /var/lib/registry
+      name: images-store
   - name: registry-proxy
     image: nginx
     ports:
@@ -23,3 +26,20 @@ spec:
   - name: nginx-conf
     hostPath:
       path: /etc/registry
+  - name: images-store
+    # FIXME
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: docker-registry
+  namespace: kube-system
+spec:
+  selector:
+    k8s-app: docker-registry
+  ports:
+  - name: https
+    protocol: TCP
+    port: 5000
