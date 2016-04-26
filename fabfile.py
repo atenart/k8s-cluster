@@ -506,6 +506,7 @@ def _setup_kubernetes():
                   'clusters:\n'
                   '- name: local\n'
                   '  cluster:\n'
+                  '    server: %s\n'
                   '    certificate-authority: /etc/kubernetes/ssl/ca.pem\n'
                   'users:\n'
                   '- name: kubelet\n'
@@ -517,7 +518,7 @@ def _setup_kubernetes():
                   '    cluster: local\n'
                   '    user: kubelet\n'
                   '  name: kubelet-context\n'
-                  'current-context: kubelet-context')
+                  'current-context: kubelet-context' % master)
     put(StringIO(kubeconfig), '/etc/kubernetes/worker-kubeconfig.yaml', use_sudo=True)
 
     if not os.path.isfile('kubectl'):   # master

@@ -93,6 +93,14 @@ spec:
         args:
         # command = "/kube2sky"
         - --domain=cluster
+        - --kubecfg_file=/etc/kubernetes/worker-kubeconfig.yaml
+        volumeMounts:
+          - mountPath: /etc/kubernetes/worker-kubeconfig.yaml
+            name: kubeconfig
+            readOnly: true
+          - mountPath: /etc/kubernetes/ssl
+            name: etc-kube-ssl
+            readOnly: true
       - name: skydns
         image: gcr.io/google_containers/skydns:2015-10-13-8c72f8c
         resources:
@@ -133,4 +141,10 @@ spec:
       volumes:
       - name: etcd-storage
         emptyDir: {}
+      - name: kubeconfig
+        hostPath:
+          path: /etc/kubernetes/worker-kubeconfig.yaml
+      - name: etc-kube-ssl
+        hostPath:
+          path: /etc/kubernetes/ssl
       dnsPolicy: Default
