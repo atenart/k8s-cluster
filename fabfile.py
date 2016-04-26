@@ -417,12 +417,14 @@ def _kubernetes_setup_master(ip):
         sudo('chown root:root *.pem')
 
     kubelet_service = ('[Service]\n'
-                       'ExecStart=/usr/bin/kubelet \\\n'
+                       'ExecStartPre=/usr/bin/mkdir -p /etc/kubernetes/manifests\n'
+                       'Environment=KUBELET_VERSION=v1.2.2_coreos.0\n'
+                       'ExecStart=/usr/lib/coreos/kubelet-wrapper \\\n'
                        '  --api-servers=http://127.0.0.1:8080 \\\n'
-                       '  --register-node=false \\\n'
+                       '  --register-schedulable=false \\\n'
                        '  --allow-privileged=true \\\n'
                        '  --config=/etc/kubernetes/manifests \\\n'
-                       '  --hostname-override=%s\\\n'
+                       '  --hostname-override=%s \\\n'
                        '  --cluster-dns=10.20.0.42 \\\n'
                        '  --cluster-domain=cluster\n'
                        'Restart=always\n'
@@ -441,7 +443,7 @@ def _kubernetes_setup_master(ip):
             time.sleep(15)
 
     # add the 'kube-system' namespace
-    run('curl -XPOST -d\'{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"kube-system"}}\' '
+    run('curl -H "Content-Type: application/json" -XPOST -d\'{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"kube-system"}}\' '
         '"http://127.0.0.1:8080/api/v1/namespaces"')
 
 def _kubernetes_setup_worker(ip, apiserver):
@@ -459,21 +461,23 @@ def _kubernetes_setup_worker(ip, apiserver):
         sudo('chown root:root *.pem')
 
     kubelet_service = ('[Service]\n'
-                        'ExecStart=/usr/bin/kubelet \\\n'
-                        '  --api-servers=%s \\\n'
-                        '  --register-node=true \\\n'
-                        '  --allow-privileged=true \\\n'
-                        '  --config=/etc/kubernetes/manifests \\\n'
-                        '  --hostname-override=%s \\\n'
-                        '  --cluster-dns=10.20.0.42 \\\n'
-                        '  --cluster-domain=cluster \\\n'
-                        '  --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \\\n'
-                        '  --tls-cert-file=/etc/kubernetes/ssl/worker.pem \\\n'
-                        '  --tls-private-key-file=/etc/kubernetes/ssl/worker-key.pem\n'
-                        'Restart=always\n'
-                        'RestartSec=10\n'
-                        '[Install]\n'
-                        'WantedBy=multi-user.target') % (apiserver, ip)
+                       'ExecStartPre=/usr/bin/mkdir -p /etc/kubernetes/manifests\n'
+                       'Environment=KUBELET_VERSION=v1.2.2_coreos.0\n'
+                       'ExecStart=/usr/lib/coreos/kubelet-wrapper \\\n'
+                       '  --api-servers=%s \\\n'
+                       '  --register-node=true \\\n'
+                       '  --allow-privileged=true \\\n'
+                       '  --config=/etc/kubernetes/manifests \\\n'
+                       '  --hostname-override=%s \\\n'
+                       '  --cluster-dns=10.20.0.42 \\\n'
+                       '  --cluster-domain=cluster \\\n'
+                       '  --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \\\n'
+                       '  --tls-cert-file=/etc/kubernetes/ssl/worker.pem \\\n'
+                       '  --tls-private-key-file=/etc/kubernetes/ssl/worker-key.pem\n'
+                       'Restart=always\n'
+                       'RestartSec=10\n'
+                       '[Install]\n'
+                       'WantedBy=multi-user.target') % (apiserver, ip)
     put(StringIO(kubelet_service), '/etc/systemd/system/kubelet.service', use_sudo=True)
 
     sudo('systemctl daemon-reload')

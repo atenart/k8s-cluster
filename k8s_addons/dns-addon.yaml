@@ -24,29 +24,32 @@ spec:
 apiVersion: v1
 kind: ReplicationController
 metadata:
-  name: kube-dns-v9
+  name: kube-dns-v11
   namespace: kube-system
   labels:
     k8s-app: kube-dns
-    version: v9
+    version: v11
     kubernetes.io/cluster-service: "true"
 spec:
   replicas: 1
   selector:
     k8s-app: kube-dns
-    version: v9
+    version: v11
   template:
     metadata:
       labels:
         k8s-app: kube-dns
-        version: v9
+        version: v11
         kubernetes.io/cluster-service: "true"
     spec:
       containers:
       - name: etcd
-        image: gcr.io/google_containers/etcd:2.0.9
+        image: gcr.io/google_containers/etcd-amd64:2.2.1
         resources:
           limits:
+            cpu: 100m
+            memory: 500Mi
+          requests:
             cpu: 100m
             memory: 50Mi
         command:
@@ -63,33 +66,47 @@ spec:
         - name: etcd-storage
           mountPath: /var/etcd/data
       - name: kube2sky
-        image: gcr.io/google_containers/kube2sky:1.11
+        image: gcr.io/google_containers/kube2sky:1.14
         resources:
           limits:
             cpu: 100m
+            memory: 200Mi
+          requests:
+            cpu: 100m
             memory: 50Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: 8081
+            scheme: HTTP
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
         args:
         # command = "/kube2sky"
-        - -domain=cluster
-        - -kube_master_url=MASTER_HOST
-        - -kubecfg_file=/etc/kubernetes/worker-kubeconfig.yaml
-        volumeMounts:
-          - mountPath: /etc/kubernetes/worker-kubeconfig.yaml
-            name: kubeconfig
-            readOnly: true
-          - mountPath: /etc/kubernetes/ssl
-            name: etc-kube-ssl
-            readOnly: true
+        - --domain=cluster
       - name: skydns
-        image: gcr.io/google_containers/skydns:2015-03-11-001
+        image: gcr.io/google_containers/skydns:2015-10-13-8c72f8c
         resources:
           limits:
+            cpu: 100m
+            memory: 200Mi
+          requests:
             cpu: 100m
             memory: 50Mi
         args:
         # command = "/skydns"
-        - -machines=http://localhost:4001
+        - -machines=http://127.0.0.1:4001
         - -addr=0.0.0.0:53
+        - -ns-rotate=false
         - -domain=cluster.
         ports:
         - containerPort: 53
@@ -98,28 +115,17 @@ spec:
         - containerPort: 53
           name: dns-tcp
           protocol: TCP
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8080
-            scheme: HTTP
-          initialDelaySeconds: 30
-          timeoutSeconds: 5
-        readinessProbe:
-          httpGet:
-            path: /healthz
-            port: 8080
-            scheme: HTTP
-          initialDelaySeconds: 1
-          timeoutSeconds: 5
       - name: healthz
         image: gcr.io/google_containers/exechealthz:1.0
         resources:
           limits:
             cpu: 10m
             memory: 20Mi
+          requests:
+            cpu: 10m
+            memory: 20Mi
         args:
-        - -cmd=nslookup kubernetes.default.svc.cluster localhost >/dev/null
+        - -cmd=nslookup kubernetes.default.svc.cluster 127.0.0.1 >/dev/null
         - -port=8080
         ports:
         - containerPort: 8080
@@ -127,10 +133,4 @@ spec:
       volumes:
       - name: etcd-storage
         emptyDir: {}
-      - name: kubeconfig
-        hostPath:
-          path: /etc/kubernetes/worker-kubeconfig.yaml
-      - name: etc-kube-ssl
-        hostPath:
-          path: /etc/kubernetes/ssl
       dnsPolicy: Default

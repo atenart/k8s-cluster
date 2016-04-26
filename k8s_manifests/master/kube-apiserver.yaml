@@ -7,12 +7,12 @@ spec:
   hostNetwork: true
   containers:
   - name: kube-apiserver
-    image: gcr.io/google_containers/hyperkube:v1.1.2
+    image: quay.io/coreos/hyperkube:v1.2.2_coreos.0
     command:
     - /hyperkube
     - apiserver
     - --bind-address=0.0.0.0
-    - --etcd-servers=ETCD_ENDPOINTS
+    - --etcd-servers=http://127.0.0.1:2379
     - --allow-privileged=true
     - --service-cluster-ip-range=K8S_SERVICE_IP
     - --secure-port=443
