@@ -555,11 +555,13 @@ def _setup_registry():
     # put the pod manifest
     put('%s/registry/docker-registry.yaml' % rootdir, '/etc/kubernetes/manifests', use_sudo=True)
 
-    # add the nginx configuration
-    sudo('mkdir -p -m 0755 /etc/registry')
-    put('%s/registry/nginx.conf' % rootdir, '/etc/registry', use_sudo=True)
+    sudo('mkdir -p -m 0755 /var/registry/images')
 
-    with _tmpdir() as tmpdir, lcd(tmpdir), cd('/etc/registry'):
+    # add the nginx configuration
+    sudo('mkdir -p -m 0755 /var/registry/nginx')
+    put('%s/registry/nginx.conf' % rootdir, '/var/registry/nginx', use_sudo=True)
+
+    with _tmpdir() as tmpdir, lcd(tmpdir), cd('/var/registry/nginx'):
         _gen_cert(outdir=tmpdir, cadir='ca/registry', cn=ip, prefix='registry', ip=ip)
 
         put('registry-key.pem', 'registry-key.pem', use_sudo=True)

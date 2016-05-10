@@ -25,9 +25,10 @@ spec:
   volumes:
   - name: nginx-conf
     hostPath:
-      path: /etc/registry
+      path: /var/registry/nginx
   - name: images-store
-    # FIXME
+    hostPath:
+      path: /var/registry/images
 
 ---
 
