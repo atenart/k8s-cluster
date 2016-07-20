@@ -7,7 +7,7 @@ spec:
   hostNetwork: true
   containers:
   - name: kube-scheduler
-    image: atenart/hyperkube:v1.2.2
+    image: quay.io/coreos/hyperkube:v1.2.2_coreos.0
     command:
     - /hyperkube
     - scheduler
