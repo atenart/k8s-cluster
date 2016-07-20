@@ -306,47 +306,6 @@ def _setup_etcd(proxy=False):
     _etcd_setup_wrapper()
 
 '''
-Fleet setup
-'''
-def _fleet_endpoints():
-    endpoints = []
-    for l in run('fleetctl --ca-file=/etc/etcd/client.ca list-machines').stdout.strip().splitlines():
-        for w in l.split():
-            try:
-                socket.inet_aton(w)
-                endpoints.append(w)
-            except socket.error:
-                continue
-    return endpoints
-
-def _fleet_setup_wrapper():
-    endpoints = _fleet_endpoints()
-    wrapper = '#!/bin/bash\n'
-    # poor's man HA. Yerk :<
-    for r in endpoints:
-        wrapper += 'nc -z %s 2379 &>/dev/null\n' % r
-        wrapper += 'if [ $? -eq 0 ]; then\n'
-        wrapper += '../bin/fleetctl --ca-file=ca/etcd/client/ca.pem --endpoint=https://%s:2379 $@\n' % r
-        wrapper += 'exit $?\n'
-        wrapper += 'fi\n'
-    open('fleetctl', 'w').write(wrapper)
-    local('chmod +x fleetctl')
-
-def _setup_fleet():
-    append('/etc/profile.d/etcd.sh', 'export FLEETCTL_CA_FILE=/etc/etcd/client.ca', use_sudo=True)
-
-    sudo('systemctl enable fleet.service')
-    sudo('systemctl start fleet.service')
-
-    # wait for the fleet daemon to be up and running
-    with settings(warn_only=True):
-        while run('fleetctl --ca-file=/etc/etcd/client.ca status').failed:
-            time.sleep(1)
-
-    # locally setup/update a wrapper to connect to the fleet cluster
-    _fleet_setup_wrapper()
-
-'''
 Flanneld setup
 '''
 def _setup_flanneld(network='10.10.0.0/16', netmask=24):
@@ -625,6 +584,5 @@ def bootstrap_replica(hostname=None, address=None, gateway=None, device='/dev/sd
         reboot()
 
     _setup_etcd()
-    _setup_fleet()
     _setup_flanneld()
     _setup_kubernetes()
