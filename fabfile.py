@@ -219,9 +219,6 @@ def _etcd_setup_service(ip):
     }
     put(StringIO(_systemd_env(env)), '/etc/systemd/system/etcd2.service.d/env.conf', use_sudo=True)
 
-    append('[Service]\nExecStart=\nExecStart=/usr/bin/etcd2',
-           '/etc/systemd/system/etcd2.service.d/2.2.conf', use_sudo=True)
-
     sudo('mkdir -p /etc/profile.d')
     append('/etc/profile.d/etcd.sh', 'export ETCDCTL_CA_FILE=/etc/etcd/client.ca', use_sudo=True)
 
