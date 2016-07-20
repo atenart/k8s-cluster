@@ -356,7 +356,12 @@ def _setup_flanneld(network='10.10.0.0/16', netmask=24):
                   '\'{"Network":"%s","SubnetLen":%d,"Backend":{"Type":"host-gw"}}\'' %
                   (network, netmask))
 
-    append('/etc/profile.d/etcd.sh', 'export FLANNELD_ETCD_CAFILE=/etc/etcd/client.ca', use_sudo=True)
+    sudo('mkdir -p /etc/systemd/system/flanneld.service.d')
+    env  = 'export FLANNELD_ETCD_ENDPOINTS=%s' % _etcd_endpoints()
+    env += 'export FLANNELD_ETCD_CAFILE=/etc/etcd/client.ca\n'
+    env += 'export FLANNELD_ETCD_CERTFILE=/etc/etcd/client.pem\n'
+    env += 'export FLANNELD_ETCD_KEYFILE=/etc/etcd/client-key.pem\n'
+    put(StringIO(env), '/etc/systemd/system/flanneld.service.d/etcd.conf', use_sudo=True)
 
     sudo('mkdir -p /etc/systemd/system/docker.service.d')
     dependency = '[Unit]\nRequires=flanneld.service\nAfter=flanneld.service'
