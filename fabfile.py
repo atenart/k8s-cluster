@@ -381,7 +381,7 @@ def _kubernetes_setup_master(ip):
 
     kubelet_service = ('[Service]\n'
                        'ExecStartPre=/usr/bin/mkdir -p /etc/kubernetes/manifests\n'
-                       'Environment=KUBELET_VERSION=v1.3.2_coreos.0\n'
+                       'Environment=KUBELET_VERSION=v1.3.7_coreos.0\n'
                        'ExecStart=/usr/lib/coreos/kubelet-wrapper \\\n'
                        '  --api-servers=http://127.0.0.1:8080 \\\n'
                        '  --register-schedulable=false \\\n'
@@ -425,7 +425,7 @@ def _kubernetes_setup_worker(ip, apiserver):
 
     kubelet_service = ('[Service]\n'
                        'ExecStartPre=/usr/bin/mkdir -p /etc/kubernetes/manifests\n'
-                       'Environment=KUBELET_VERSION=v1.3.2_coreos.0\n'
+                       'Environment=KUBELET_VERSION=v1.3.7_coreos.0\n'
                        'ExecStart=/usr/lib/coreos/kubelet-wrapper \\\n'
                        '  --api-servers=%s \\\n'
                        '  --register-node=true \\\n'
